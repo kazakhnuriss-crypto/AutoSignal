@@ -9,14 +9,19 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+
 from aiogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    LinkPreviewOptions
 )
 
+# =========================
 # CONFIG
+# =========================
+
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
@@ -26,18 +31,24 @@ if not TOKEN or not OWNER_ID:
 bot = Bot(TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Temporary channel settings
+# Каналдар уақытша жадта сақталады
 channels = {}
 
 
+# =========================
 # STATES
+# =========================
+
 class Setup(StatesGroup):
     channel = State()
     word = State()
     url = State()
 
 
-# MENU
+# =========================
+# KEYBOARDS
+# =========================
+
 def menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -63,7 +74,10 @@ def menu():
     )
 
 
+# =========================
 # START
+# =========================
+
 @dp.message(CommandStart())
 async def start(message: Message):
     if message.from_user.id != OWNER_ID:
@@ -71,14 +85,21 @@ async def start(message: Message):
 
     await message.answer(
         "⚙️ AUTO SIGNATURE BOT\n\n"
-        "Қош келдің, Creator!",
+        "Қош келдің, Creator!\n"
+        "Басқару мәзірі:",
         reply_markup=menu()
     )
 
 
+# =========================
 # ADD CHANNEL
+# =========================
+
 @dp.callback_query(F.data == "add")
-async def add_channel(call: CallbackQuery, state: FSMContext):
+async def add_channel(
+    call: CallbackQuery,
+    state: FSMContext
+):
     if call.from_user.id != OWNER_ID:
         return
 
@@ -90,27 +111,48 @@ async def add_channel(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
+# =========================
 # GET CHANNEL
+# =========================
+
 @dp.message(Setup.channel)
-async def get_channel(message: Message, state: FSMContext):
+async def get_channel(
+    message: Message,
+    state: FSMContext
+):
     if message.from_user.id != OWNER_ID:
         return
 
-    await state.update_data(
-        channel=message.text.strip()
-    )
+    if not message.text:
+        await message.answer("❌ Канал атауын мәтінмен жібер.")
+        return
+
+    channel = message.text.strip()
+
+    await state.update_data(channel=channel)
 
     await message.answer(
-        "✏️ Қандай сөз жазылсын?"
+        "✏️ Қандай сөз жазылсын?\n\n"
+        "Мысалы: Whitless"
     )
 
     await state.set_state(Setup.word)
 
 
+# =========================
 # GET WORD
+# =========================
+
 @dp.message(Setup.word)
-async def get_word(message: Message, state: FSMContext):
+async def get_word(
+    message: Message,
+    state: FSMContext
+):
     if message.from_user.id != OWNER_ID:
+        return
+
+    if not message.text or not message.text.strip():
+        await message.answer("❌ Сөз бос болмауы керек.")
         return
 
     await state.update_data(
@@ -118,23 +160,39 @@ async def get_word(message: Message, state: FSMContext):
     )
 
     await message.answer(
-        "🔗 Енді URL сілтемесін жібер:"
+        "🔗 Енді осы сөзге байланысты URL жібер:"
     )
 
     await state.set_state(Setup.url)
 
 
-# GET URL AND SAVE CHANNEL
+# =========================
+# GET URL
+# =========================
+
 @dp.message(Setup.url)
-async def get_url(message: Message, state: FSMContext):
+async def get_url(
+    message: Message,
+    state: FSMContext
+):
     if message.from_user.id != OWNER_ID:
+        return
+
+    if not message.text:
+        await message.answer("❌ URL мәтін түрінде жібер.")
         return
 
     url = message.text.strip()
     parsed = urlparse(url)
 
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        await message.answer("❌ Дұрыс URL жібер!")
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+    ):
+        await message.answer(
+            "❌ Дұрыс URL жібер!\n"
+            "Мысалы: https://t.me/example"
+        )
         return
 
     data = await state.get_data()
@@ -155,6 +213,13 @@ async def get_url(message: Message, state: FSMContext):
             await state.clear()
             return
 
+        if not member.can_edit_messages:
+            await message.answer(
+                "❌ Ботқа Edit messages рұқсатын бер!"
+            )
+            await state.clear()
+            return
+
         channels[str(chat.id)] = {
             "title": chat.title or str(chat.id),
             "word": data["word"],
@@ -162,22 +227,28 @@ async def get_url(message: Message, state: FSMContext):
         }
 
         await message.answer(
-            "✅ КАНАЛ ҚОСЫЛДЫ!\n\n"
-            f"📢 {chat.title}\n"
-            f"✏️ {data['word']}\n"
-            f"🔗 {url}",
+            "✅ КАНАЛ СӘТТІ ҚОСЫЛДЫ!\n\n"
+            f"📢 Канал: {chat.title}\n"
+            f"✏️ Сөз: {data['word']}\n"
+            f"🔗 URL: {url}",
             reply_markup=menu()
         )
 
-    except Exception as e:
+    except Exception:
+        logging.exception("Channel setup error")
+
         await message.answer(
-            f"❌ Қате: {e}"
+            "❌ Каналды қосу мүмкін болмады.\n"
+            "Username, ID және админ рұқсатын тексер."
         )
 
     await state.clear()
 
 
-# SHOW CHANNELS
+# =========================
+# CHANNEL LIST
+# =========================
+
 @dp.callback_query(F.data == "list")
 async def show_channels(call: CallbackQuery):
     if call.from_user.id != OWNER_ID:
@@ -185,7 +256,7 @@ async def show_channels(call: CallbackQuery):
 
     if not channels:
         await call.message.answer(
-            "📭 Әзірге канал жоқ."
+            "📭 Әзірге канал қосылмаған."
         )
     else:
         for channel_id, data in channels.items():
@@ -199,14 +270,17 @@ async def show_channels(call: CallbackQuery):
     await call.answer()
 
 
-# DELETE CHANNEL
+# =========================
+# DELETE CHANNEL MENU
+# =========================
+
 @dp.callback_query(F.data == "delete")
 async def delete_menu(call: CallbackQuery):
     if call.from_user.id != OWNER_ID:
         return
 
     if not channels:
-        await call.message.answer("Каналдар жоқ.")
+        await call.message.answer("📭 Каналдар жоқ.")
         await call.answer()
         return
 
@@ -230,6 +304,10 @@ async def delete_menu(call: CallbackQuery):
     await call.answer()
 
 
+# =========================
+# DELETE CHANNEL
+# =========================
+
 @dp.callback_query(F.data.startswith("del:"))
 async def delete_channel(call: CallbackQuery):
     if call.from_user.id != OWNER_ID:
@@ -239,14 +317,22 @@ async def delete_channel(call: CallbackQuery):
 
     if channel_id in channels:
         del channels[channel_id]
-        await call.message.answer("✅ Канал өшірілді.")
+
+        await call.message.answer(
+            "✅ Канал өшірілді!",
+            reply_markup=menu()
+        )
 
     await call.answer()
 
 
+# =========================
 # AUTOMATIC SIGNATURE
+# =========================
+
 @dp.channel_post()
 async def sign_post(message: Message):
+
     data = channels.get(str(message.chat.id))
 
     if not data:
@@ -265,15 +351,23 @@ async def sign_post(message: Message):
     new_text = original_text + "\n\n" + signature
 
     try:
+
+        # TEXT POST
         if message.text:
+
             await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=message.message_id,
                 text=new_text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                link_preview_options=LinkPreviewOptions(
+                    is_disabled=True
+                )
             )
 
+        # PHOTO / VIDEO / DOCUMENT CAPTION
         elif message.caption:
+
             await bot.edit_message_caption(
                 chat_id=message.chat.id,
                 message_id=message.message_id,
@@ -282,14 +376,22 @@ async def sign_post(message: Message):
             )
 
     except Exception:
-        logging.exception("Post editing error")
+        logging.exception(
+            f"Signature error: {message.chat.id}"
+        )
 
 
-# RUN
+# =========================
+# RUN BOT
+# =========================
+
 async def main():
-    logging.basicConfig(level=logging.INFO)
 
-    dp.include_router(dp.sub_routers[0]) if False else None
+    logging.basicConfig(
+        level=logging.INFO
+    )
+
+    print("AUTO SIGNATURE BOT STARTED")
 
     await dp.start_polling(bot)
 
